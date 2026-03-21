@@ -1,0 +1,45 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual env / local tool caches
+.venv/
+venv/
+.cache/
+.local/
+.vscode-server/
+
+# Runtime outputs and logs
+*.log
+tmp.*/
+
+# Data and model artifacts
+sail_data_demo/
+sail_data_mid/
+sail_data_full_cc3m_20260321/
+sail_runs/
+samples/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.ckpt
+
+# External binaries and archives
+azcopy
+*.tar.gz
+*.zip
+
+# Secrets / credentials
+*.pem
+*.key
+*.crt
+*token*.json
+token.json
+yihan/token.json
+yihan/code_tunnel.json
+
+# OS / editor noise
+.DS_Store
+.ipynb_checkpoints/
