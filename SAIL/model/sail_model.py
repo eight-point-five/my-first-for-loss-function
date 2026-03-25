@@ -260,7 +260,10 @@ class SAILModel(nn.Module):
             param.requires_grad = True
 
     def load_vlhead_weights(self, vlhead_weights_path):
-        weights = torch.load(vlhead_weights_path)
+        try:
+            weights = torch.load(vlhead_weights_path, weights_only=False)
+        except TypeError:
+            weights = torch.load(vlhead_weights_path)
         if "state_dict" in weights:
             weights = weights["state_dict"]
         msg = self.vlhead.load_state_dict(weights, strict=False)

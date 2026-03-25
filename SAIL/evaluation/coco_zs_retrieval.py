@@ -47,10 +47,10 @@ def encode_dataset(
     save_dir: str = None,
 ):
     save_backbone_image_features_path = os.path.join(
-        save_dir, f"{vision_model_name}/coco.pt"
+        save_dir, f"vision__{vision_model_name}/coco.pt"
     )
     save_backbone_text_features_path = os.path.join(
-        save_dir, f"{text_model_name}/coco.pt"
+        save_dir, f"text__{text_model_name}/coco.pt"
     )
     with torch.no_grad():
         # image_to_text_map[i] gives the corresponding text indices for the ith image

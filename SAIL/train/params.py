@@ -556,6 +556,19 @@ def parse_args(args):
         help='Use SigLip (sigmoid) loss.'
     )
     parser.add_argument(
+        "--loss-type",
+        type=str,
+        default="auto",
+        choices=["auto", "clip", "siglip", "barlowtwins", "flowmax"],
+        help="Select loss function. 'auto' keeps backward compatibility with --siglip/--barlowtwins flags.",
+    )
+    parser.add_argument(
+        "--diagonal-weight",
+        type=float,
+        default=0.0,
+        help="Diagonal weight for SigLip loss.",
+    )
+    parser.add_argument(
         "--barlowtwins",
         default=False,  
         action="store_true",

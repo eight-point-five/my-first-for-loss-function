@@ -1,5 +1,5 @@
 from .sail_model import AlignmentLayer, SAILModel, ShareLockAlignmentLayer
-from .loss import ClipLoss, SigLipLoss, BarlowTwinsLoss
+from .loss import ClipLoss, SigLipLoss, BarlowTwinsLoss, FlowMaxLoss
 from .vision_model import ImageEmbedding
 from .language_model import SentenceEmbedding
 from typing import Union, Optional
@@ -77,15 +77,34 @@ def create_model(
 
 
 def create_loss(args):
-    if args.siglip:
+    loss_type = getattr(args, "loss_type", "auto")
+    if loss_type == "auto":
+        if args.barlowtwins:
+            loss_type = "barlowtwins"
+        elif args.siglip:
+            loss_type = "siglip"
+        else:
+            loss_type = "clip"
+
+    if loss_type == "siglip":
         print("Using SigLip loss")
         return SigLipLoss(
             rank=args.rank,
             world_size=args.world_size,
+            diagonal_weight=args.diagonal_weight,
         )
-    else:
-        print("Using Clip (infoNCE) loss")
-        return ClipLoss(
+
+    if loss_type == "barlowtwins":
+        print("Using BarlowTwins loss")
+        return BarlowTwinsLoss(
+            rank=args.rank,
+            world_size=args.world_size,
+            lambda_param=args.lambda_param,
+        )
+
+    if loss_type == "flowmax":
+        print("Using FlowMax loss")
+        return FlowMaxLoss(
             local_loss=args.local_loss,
             gather_with_grad=args.gather_with_grad,
             cache_labels=True,
@@ -93,3 +112,13 @@ def create_loss(args):
             world_size=args.world_size,
             use_horovod=args.horovod,
         )
+
+    print("Using Clip (infoNCE) loss")
+    return ClipLoss(
+        local_loss=args.local_loss,
+        gather_with_grad=args.gather_with_grad,
+        cache_labels=True,
+        rank=args.rank,
+        world_size=args.world_size,
+        use_horovod=args.horovod,
+    )

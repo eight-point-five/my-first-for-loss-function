@@ -166,17 +166,17 @@ def imagenet_eval(
 ):
     if version == "v1":
         save_backbone_features_path = os.path.join(
-            save_dir, f"{vision_model_name}/imagenet_v1.pt"
+              save_dir, f"vision__{vision_model_name}/imagenet_v1.pt"
         )
         save_backbone_classifier_features_path = os.path.join(
-            save_dir, f"{text_model_name}/classifier_v1.pt"
+              save_dir, f"text__{text_model_name}/classifier_v1.pt"
         )
     else:
         save_backbone_features_path = os.path.join(
-            save_dir, f"{vision_model_name}/imagenet.pt"
+              save_dir, f"vision__{vision_model_name}/imagenet.pt"
         )
         save_backbone_classifier_features_path = os.path.join(
-            save_dir, f"{text_model_name}/classifier.pt")
+              save_dir, f"text__{text_model_name}/classifier.pt")
 
     model.eval()
     device = get_model_device(model)

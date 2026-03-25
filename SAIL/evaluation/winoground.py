@@ -80,8 +80,8 @@ def winoground_eval(model, text_model_name, vision_model_name, save_dir):
     device = get_model_device(model)
     winoground_clip_scores = []
 
-    image_feature_path = f"{save_dir}/{vision_model_name}/winoground.pt"
-    text_feature_path = f"{save_dir}/{text_model_name}/winoground.pt"
+    image_feature_path = f"{save_dir}/vision__{vision_model_name}/winoground.pt"
+    text_feature_path = f"{save_dir}/text__{text_model_name}/winoground.pt"
 
     if not os.path.exists(image_feature_path) or not os.path.exists(text_feature_path):
         winoground = load_dataset("facebook/winoground", use_auth_token=auth_token)[

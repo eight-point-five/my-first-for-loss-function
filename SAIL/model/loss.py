@@ -136,6 +136,39 @@ class ClipLoss(nn.Module):
         return {"contrastive_loss": total_loss} if output_dict else total_loss
 
 
+class FlowMaxLoss(ClipLoss):
+    def forward(
+            self,
+            image_features,
+            text_features,
+            logit_scale=np.log(1 / 0.07),
+            logits_per_text=None,
+            trajectory_logits_per_text=None,
+            output_dict=False,
+            *args,
+            **kwargs,
+    ):
+        if logits_per_text is None:
+            logits_per_image, logits_per_text = self.get_logits(image_features, text_features, logit_scale)
+            logits_per_text = logits_per_image.T
+
+        if trajectory_logits_per_text is not None:
+            all_logits_t2i = torch.cat([logits_per_text.unsqueeze(0), trajectory_logits_per_text], dim=0)
+        else:
+            all_logits_t2i = logits_per_text.unsqueeze(0)
+
+        all_logits_i2t = all_logits_t2i.transpose(-1, -2)
+
+        log_prob_t2i = F.log_softmax(all_logits_t2i, dim=-1)
+        log_prob_i2t = F.log_softmax(all_logits_i2t, dim=-1)
+
+        positive_t2i = torch.diagonal(log_prob_t2i, dim1=-2, dim2=-1).max(dim=0).values
+        positive_i2t = torch.diagonal(log_prob_i2t, dim1=-2, dim2=-1).max(dim=0).values
+
+        total_loss = -0.5 * (positive_t2i.mean() + positive_i2t.mean())
+        return {"contrastive_loss": total_loss} if output_dict else total_loss
+
+
 class CoCaLoss(ClipLoss):
     def __init__(
             self,
