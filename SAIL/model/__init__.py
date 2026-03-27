@@ -111,6 +111,8 @@ def create_loss(args):
             rank=args.rank,
             world_size=args.world_size,
             use_horovod=args.horovod,
+            trajectory_steps=getattr(args, "flowmax_trajectory_steps", 4),
+            trajectory_cutoff_ratio=getattr(args, "flowmax_trajectory_cutoff_ratio", 0.0),
         )
 
     print("Using Clip (infoNCE) loss")

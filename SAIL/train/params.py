@@ -563,6 +563,18 @@ def parse_args(args):
         help="Select loss function. 'auto' keeps backward compatibility with --siglip/--barlowtwins flags.",
     )
     parser.add_argument(
+        "--flowmax-trajectory-steps",
+        type=int,
+        default=4,
+        help="Number of trajectory steps used by FlowMax when building trajectory logits from extra text features.",
+    )
+    parser.add_argument(
+        "--flowmax-trajectory-cutoff-ratio",
+        type=float,
+        default=0.0,
+        help="Drop early trajectory steps by ratio in [0,1) before FlowMax max-pooling over path.",
+    )
+    parser.add_argument(
         "--diagonal-weight",
         type=float,
         default=0.0,

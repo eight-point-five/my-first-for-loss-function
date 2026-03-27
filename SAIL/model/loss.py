@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import numpy as np
+import warnings
 try:
     import torch.distributed.nn
     from torch import distributed as dist
@@ -137,20 +138,139 @@ class ClipLoss(nn.Module):
 
 
 class FlowMaxLoss(ClipLoss):
+    def __init__(
+            self,
+            local_loss=False,
+            gather_with_grad=False,
+            cache_labels=False,
+            rank=0,
+            world_size=1,
+            use_horovod=False,
+            trajectory_steps=4,
+            trajectory_cutoff_ratio=0.0,
+    ):
+        super().__init__(
+            local_loss=local_loss,
+            gather_with_grad=gather_with_grad,
+            cache_labels=cache_labels,
+            rank=rank,
+            world_size=world_size,
+            use_horovod=use_horovod,
+        )
+        self.trajectory_steps = int(max(1, trajectory_steps))
+        self.trajectory_cutoff_ratio = float(min(max(trajectory_cutoff_ratio, 0.0), 0.99))
+        self._warned_missing_trajectory = False
+
+    def _build_trajectory_logits(
+            self,
+            image_features,
+            text_features,
+            extra_text_features,
+            logit_scale,
+            logit_bias=None,
+    ):
+        image_features = F.normalize(image_features, p=2, dim=-1)
+        text_features = F.normalize(text_features, p=2, dim=-1)
+        extra_text_features = F.normalize(extra_text_features, p=2, dim=-1)
+
+        # LZN-style path idea adapted to SAIL: interpolate from current text anchor
+        # toward the extra text anchor to form a discrete latent trajectory.
+        alphas = torch.linspace(
+            1.0 / self.trajectory_steps,
+            1.0,
+            self.trajectory_steps,
+            device=text_features.device,
+            dtype=text_features.dtype,
+        )
+        trajectory_text = (
+            (1.0 - alphas[:, None, None]) * text_features[None, :, :]
+            + alphas[:, None, None] * extra_text_features[None, :, :]
+        )
+        trajectory_text = F.normalize(trajectory_text, p=2, dim=-1)
+
+        trajectory_logits = torch.einsum("tnd,md->tnm", trajectory_text, image_features) * logit_scale
+        if logit_bias is not None:
+            trajectory_logits = trajectory_logits + logit_bias
+        return trajectory_logits
+
     def forward(
             self,
             image_features,
             text_features,
             logit_scale=np.log(1 / 0.07),
+            logit_bias=None,
             logits_per_text=None,
             trajectory_logits_per_text=None,
+            extra_text_features=None,
             output_dict=False,
             *args,
             **kwargs,
     ):
-        if logits_per_text is None:
-            logits_per_image, logits_per_text = self.get_logits(image_features, text_features, logit_scale)
-            logits_per_text = logits_per_image.T
+        # In DDP, ClipLoss.get_logits may return global logits (all-gathered features).
+        # FlowMax trajectory must use the same feature scope (global vs local) to keep shapes aligned.
+        if (
+            self.world_size > 1
+            and logits_per_text is None
+            and trajectory_logits_per_text is None
+            and extra_text_features is not None
+        ):
+            all_image_features, all_text_features = gather_features(
+                image_features,
+                text_features,
+                self.local_loss,
+                self.gather_with_grad,
+                self.rank,
+                self.world_size,
+                self.use_horovod,
+            )
+            _, all_extra_text_features = gather_features(
+                image_features,
+                extra_text_features,
+                self.local_loss,
+                self.gather_with_grad,
+                self.rank,
+                self.world_size,
+                self.use_horovod,
+            )
+            norm_image = F.normalize(all_image_features, p=2, dim=-1)
+            norm_text = F.normalize(all_text_features, p=2, dim=-1)
+            logits_per_text = logit_scale * norm_text @ norm_image.T
+            if logit_bias is not None:
+                logits_per_text = logits_per_text + logit_bias
+
+            trajectory_logits_per_text = self._build_trajectory_logits(
+                image_features=all_image_features,
+                text_features=all_text_features,
+                extra_text_features=all_extra_text_features,
+                logit_scale=logit_scale,
+                logit_bias=logit_bias,
+            )
+        else:
+            if logits_per_text is None:
+                logits_per_image, logits_per_text = self.get_logits(image_features, text_features, logit_scale)
+                logits_per_text = logits_per_image.T
+
+            if trajectory_logits_per_text is None and extra_text_features is not None:
+                trajectory_logits_per_text = self._build_trajectory_logits(
+                    image_features=image_features,
+                    text_features=text_features,
+                    extra_text_features=extra_text_features,
+                    logit_scale=logit_scale,
+                    logit_bias=logit_bias,
+                )
+
+        if trajectory_logits_per_text is None and not self._warned_missing_trajectory:
+            warnings.warn(
+                "FlowMaxLoss is running without trajectory logits (or extra_text_features), "
+                "which makes it equivalent to CLIP loss for this batch.",
+                stacklevel=2,
+            )
+            self._warned_missing_trajectory = True
+
+        if trajectory_logits_per_text is not None and self.trajectory_cutoff_ratio > 0.0:
+            start_idx = int(trajectory_logits_per_text.shape[0] * self.trajectory_cutoff_ratio)
+            start_idx = min(start_idx, trajectory_logits_per_text.shape[0] - 1)
+            trajectory_logits_per_text = trajectory_logits_per_text[start_idx:]
 
         if trajectory_logits_per_text is not None:
             all_logits_t2i = torch.cat([logits_per_text.unsqueeze(0), trajectory_logits_per_text], dim=0)

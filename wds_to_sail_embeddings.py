@@ -4,7 +4,7 @@ import io
 import json
 import os
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image
@@ -13,15 +13,47 @@ import webdataset as wds
 
 
 def slugify(name: str) -> str:
-    return name.replace("/", "-").replace(" ", "_")
+    return name.replace("/", "-").replace(" ", "_").replace(":", "-")
 
 
 def decode_text(value) -> str:
     if value is None:
         return ""
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(x) for x in value if str(x).strip())
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="ignore")
     return str(value)
+
+
+def parse_json_payload(value: Any) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="ignore")
+    try:
+        return json.loads(value)
+    except Exception:
+        return None
+
+
+def get_sample_field(sample: Dict[str, Any], key_spec: Optional[str], json_cache: Optional[Dict[str, Any]] = None):
+    if not key_spec:
+        return None, json_cache
+
+    if key_spec.startswith("json:"):
+        field = key_spec.split(":", 1)[1]
+        if json_cache is None:
+            json_cache = parse_json_payload(sample.get("json"))
+        if isinstance(json_cache, dict):
+            return json_cache.get(field), json_cache
+        return None, json_cache
+
+    return sample.get(key_spec), json_cache
 
 
 def chunked(items: List, size: int):
@@ -39,12 +71,14 @@ def decode_rgb_from_bytes(image_bytes: bytes) -> Optional[Image.Image]:
 def build_paths(output_root: str, dataset_name: str, text_model: str, vision_model: str, text_key: str, extra_text_key: Optional[str]) -> Dict[str, str]:
     text_model_slug = slugify(text_model)
     vision_model_slug = slugify(vision_model)
+    text_key_slug = slugify(text_key)
 
     image_dir = os.path.join(output_root, "image_embedding", vision_model_slug, dataset_name)
-    text_dir = os.path.join(output_root, "text_embedding", text_model_slug, f"{dataset_name}_{text_key}")
+    text_dir = os.path.join(output_root, "text_embedding", text_model_slug, f"{dataset_name}_{text_key_slug}")
     extra_text_dir = None
     if extra_text_key:
-        extra_text_dir = os.path.join(output_root, "text_embedding", text_model_slug, f"{dataset_name}_{extra_text_key}")
+        extra_text_key_slug = slugify(extra_text_key)
+        extra_text_dir = os.path.join(output_root, "text_embedding", text_model_slug, f"{dataset_name}_{extra_text_key_slug}")
 
     os.makedirs(image_dir, exist_ok=True)
     os.makedirs(text_dir, exist_ok=True)
@@ -66,8 +100,18 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=64, help="Encoding batch size")
     parser.add_argument("--max-samples", type=int, default=None, help="Optional cap for sample count")
     parser.add_argument("--image-key", type=str, default="jpg", help="Image field key in webdataset sample")
-    parser.add_argument("--text-key", type=str, default="short", help="Primary text field key")
-    parser.add_argument("--extra-text-key", type=str, default="long", help="Optional extra text key, set '' to disable")
+    parser.add_argument(
+        "--text-key",
+        type=str,
+        default="short",
+        help="Primary text field key. Supports json field via json:<field>, e.g. json:caption",
+    )
+    parser.add_argument(
+        "--extra-text-key",
+        type=str,
+        default="long",
+        help="Optional extra text key. Supports json:<field>; set '' to disable",
+    )
     parser.add_argument("--vision-model", type=str, default="openai/clip-vit-base-patch32", help="Vision model name for SAIL ImageEmbedding")
     parser.add_argument("--text-model", type=str, default="sentence-transformers/all-mpnet-base-v2", help="Text model name for SAIL SentenceEmbedding")
     parser.add_argument("--agg-mode", type=str, default="concat", choices=["concat", "cls", "patch"], help="Vision aggregation mode")
@@ -110,12 +154,7 @@ def main():
     text_encoder = SentenceEmbedding(args.text_model)
     text_encoder.eval()
 
-    base_ds = wds.WebDataset(args.shards, shardshuffle=False, handler=wds.warn_and_continue)
-    tuple_keys = [args.image_key, args.text_key]
-    if extra_text_key:
-        tuple_keys.append(extra_text_key)
-    tuple_keys.append("__key__")
-    ds = base_ds.to_tuple(*tuple_keys)
+    ds = wds.WebDataset(args.shards, shardshuffle=False, handler=wds.warn_and_continue)
     if args.read_workers > 0:
         loader = wds.WebLoader(
             ds,
@@ -194,11 +233,17 @@ def main():
         if seen <= args.start_index:
             continue
 
+        if not isinstance(sample, dict):
+            continue
+
+        json_cache = None
+        image_bytes, _ = get_sample_field(sample, args.image_key, json_cache)
+        primary_text_raw, json_cache = get_sample_field(sample, args.text_key, json_cache)
         if extra_text_key:
-            image_bytes, primary_text_raw, secondary_text_raw, sample_key_raw = sample
+            secondary_text_raw, json_cache = get_sample_field(sample, extra_text_key, json_cache)
         else:
-            image_bytes, primary_text_raw, sample_key_raw = sample
             secondary_text_raw = ""
+        sample_key_raw = sample.get("__key__")
 
         primary_text = decode_text(primary_text_raw).strip()
         secondary_text = decode_text(secondary_text_raw).strip() if extra_text_key else ""
